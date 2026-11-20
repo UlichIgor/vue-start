@@ -8,9 +8,13 @@
     <main id="top" class="layout">
       <aside class="sidebar">
         <div class="side-label">НАВЧАЛЬНА ПРОГРАМА</div>
-        <button v-for="(lesson,i) in lessons" :key="lesson.title" class="nav-item" :class="{active:current===i,done:done.includes(i)}" @click="current=i">
-          <span class="nav-number">{{ done.includes(i) ? '✓' : String(i+1).padStart(2,'0') }}</span><span>{{ lesson.title }}</span>
-        </button>
+        <input v-model.trim="lessonSearch" class="lesson-search" type="search" placeholder="Знайти тему..." aria-label="Пошук навчального модуля">
+        <div class="lesson-nav">
+          <button v-for="lesson in visibleLessons" :key="lesson.title" class="nav-item" :class="{active:current===lesson.index,done:done.includes(lesson.index)}" @click="current=lesson.index">
+            <span class="nav-number">{{ done.includes(lesson.index) ? '✓' : String(lesson.index+1).padStart(2,'0') }}</span><span>{{ lesson.title }}</span>
+          </button>
+          <p v-if="!visibleLessons.length" class="empty-search">За цим запитом модулів не знайдено.</p>
+        </div>
         <div class="side-bottom"><span class="side-label">ТВІЙ ПРОГРЕС</span><strong>{{ done.length }} із {{ lessons.length }} модулів</strong><button class="reset" @click="resetProgress">Скинути прогрес</button></div>
       </aside>
       <section class="main-content">
@@ -25,6 +29,11 @@
         <article id="lesson" class="lesson-card">
           <div class="lesson-kicker">МОДУЛЬ {{ String(current+1).padStart(2,'0') }} / {{ lessons.length }}</div>
           <h2>{{ lesson.title }}</h2><p class="intro">{{ lesson.intro }}</p>
+          <div class="lesson-meta">
+            <span>{{ completedTasks }} / {{ lesson.tasks.length }} практичних кроків</span>
+            <span>{{ quizAnswers[current] === undefined ? 'Тест ще не пройдено' : (quizAnswers[current] === lesson.quiz.correct ? 'Тест складено ✓' : 'Є помилка в тесті') }}</span>
+            <span>{{ done.includes(current) ? 'Модуль завершено ✓' : 'Модуль у процесі' }}</span>
+          </div>
           <section v-for="section in lesson.sections" :key="section.heading" class="lesson-section">
             <h3>{{ section.heading }}</h3><p v-if="section.text">{{ section.text }}</p>
             <ul v-if="section.points"><li v-for="point in section.points" :key="point">{{ point }}</li></ul>
@@ -57,7 +66,8 @@
           <section class="quiz">
             <div class="lab-tag">ПЕРЕВІР СЕБЕ</div><h3>{{ lesson.quiz.question }}</h3>
             <button v-for="(answer,i) in lesson.quiz.answers" :key="answer" class="answer" :class="{correct:quizAnswers[current]===i && i===lesson.quiz.correct,wrong:quizAnswers[current]===i && i!==lesson.quiz.correct}" :disabled="quizAnswers[current]!==undefined" @click="answerQuiz(i)">{{ String.fromCharCode(65+i) }}. {{ answer }}</button>
-            <p v-if="quizAnswers[current]!==undefined" class="explanation" role="status">{{ quizAnswers[current]===lesson.quiz.correct ? 'Правильно! ' : 'Спробуй ще раз у наступному повторенні. ' }}{{ lesson.quiz.explanation }}</p>
+            <p v-if="quizAnswers[current]!==undefined" class="explanation" role="status">{{ quizAnswers[current]===lesson.quiz.correct ? 'Правильно! ' : 'Відповідь неправильна. Повтори пояснення та спробуй ще раз.' }}{{ lesson.quiz.explanation }}</p>
+            <button v-if="quizAnswers[current]!==undefined" class="retry-quiz" @click="resetQuiz">Повторити тест ↻</button>
           </section>
           <div class="lesson-actions"><button class="secondary" :disabled="current===0" @click="current--">← Попередній</button><button class="complete" @click="markComplete">{{ done.includes(current) ? 'Модуль завершено ✓' : 'Позначити завершеним' }}</button><button class="secondary" :disabled="current===lessons.length-1" @click="current++">Наступний →</button></div>
         </article>
@@ -178,8 +188,9 @@ export default {
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem('vue-start-course-v1') || '{}'); } catch (e) { saved = {}; }
     return {
-      lessons, exam, current: 0, done: saved.done || [], tasks: saved.tasks || {},
-      quizAnswers: saved.quizAnswers || {}, examAnswers: {}, examResult: saved.examResult ?? null,
+      lessons, exam, current: Number.isInteger(saved.current) && saved.current >= 0 && saved.current < lessons.length ? saved.current : 0,
+      lessonSearch: '', done: Array.isArray(saved.done) ? saved.done : [], tasks: saved.tasks || {},
+      quizAnswers: saved.quizAnswers || {}, examAnswers: saved.examAnswers || {}, examResult: saved.examResult ?? null,
       counter: 0, filterText: '', filterItems: ['Vue 3','React','Composition API','JavaScript','Components','Vite'],
       todos: [{text:'Вивчити ref()',done:false},{text:'Створити компонент',done:true}],
       newTodo: '', formName: '', formEmail: '', copied: ''
@@ -188,20 +199,43 @@ export default {
   computed: {
     lesson() { return this.lessons[this.current]; },
     progress() { return Math.round(this.done.length / this.lessons.length * 100); },
+    visibleLessons() {
+      const query = this.lessonSearch.toLocaleLowerCase('uk');
+      return this.lessons.map((lesson, index) => ({ ...lesson, index }))
+        .filter(lesson => lesson.title.toLocaleLowerCase('uk').includes(query));
+    },
+    completedTasks() {
+      return this.lesson.tasks.filter((task, index) => !!this.tasks[this.current + '-' + index]).length;
+    },
     filteredItems() { return this.filterItems.filter(item => item.toLowerCase().includes(this.filterText.toLowerCase())); }
   },
   watch: {
     done: { deep: true, handler() { this.persist(); } },
     tasks: { deep: true, handler() { this.persist(); } },
     quizAnswers: { deep: true, handler() { this.persist(); } },
-    examResult() { this.persist(); }
+    examResult() { this.persist(); },
+    examAnswers: { deep: true, handler() { this.persist(); } },
+    current() { this.persist(); }
   },
   methods: {
-    persist() { localStorage.setItem('vue-start-course-v1', JSON.stringify({done:this.done,tasks:this.tasks,quizAnswers:this.quizAnswers,examResult:this.examResult})); },
+    persist() {
+      try {
+        localStorage.setItem('vue-start-course-v1', JSON.stringify({
+          current:this.current, done:this.done, tasks:this.tasks,
+          quizAnswers:this.quizAnswers, examAnswers:this.examAnswers, examResult:this.examResult
+        }));
+      } catch (error) { console.warn('Не вдалося зберегти прогрес курсу:', error); }
+    },
     toggleTask(index, checked) { this.tasks[this.current+'-'+index] = checked; },
     answerQuiz(index) { this.quizAnswers[this.current] = index; },
+    resetQuiz() { this.$delete ? this.$delete(this.quizAnswers, this.current) : delete this.quizAnswers[this.current]; },
     markComplete() { if (!this.done.includes(this.current)) this.done.push(this.current); },
-    resetProgress() { if (window.confirm('Скинути весь збережений прогрес курсу?')) { this.done=[];this.tasks={};this.quizAnswers={};this.examResult=null;this.examAnswers={}; } },
+    resetProgress() {
+      if (window.confirm('Скинути весь збережений прогрес курсу та відповіді іспиту?')) {
+        this.current=0; this.done=[]; this.tasks={}; this.quizAnswers={};
+        this.examResult=null; this.examAnswers={}; this.lessonSearch='';
+      }
+    },
     addTodo() { const text=this.newTodo.trim(); if(text){this.todos.push({text,done:false});this.newTodo='';} },
     submitExam() { this.examResult=this.exam.reduce((score,q,i)=>score+(Number(this.examAnswers[i])===q[2]?1:0),0); },
     async copyCode(code) { try { await navigator.clipboard.writeText(code);this.copied=this.lesson.sections.find(s=>s.code===code)?.heading || 'code'; } catch(e) { this.copied='';window.alert('Браузер не дозволив скопіювати код. Виділи його вручну.'); } }
